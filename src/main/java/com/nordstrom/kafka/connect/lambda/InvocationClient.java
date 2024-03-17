@@ -2,14 +2,12 @@ package com.nordstrom.kafka.connect.lambda;
 
 import com.amazonaws.ClientConfiguration;
 import com.amazonaws.auth.AWSCredentialsProvider;
-import com.amazonaws.services.lambda.AWSLambdaAsync;
-import com.amazonaws.services.lambda.AWSLambdaAsyncClientBuilder;
+import com.amazonaws.services.lambda.AWSLambda;
+import com.amazonaws.services.lambda.AWSLambdaClientBuilder;
 import com.amazonaws.services.lambda.model.InvocationType;
 import com.amazonaws.services.lambda.model.InvokeRequest;
 import com.amazonaws.services.lambda.model.InvokeResult;
 import com.amazonaws.services.lambda.model.RequestTooLargeException;
-
-import com.nordstrom.kafka.connect.utils.Facility;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -17,10 +15,6 @@ import org.slf4j.LoggerFactory;
 import java.nio.ByteBuffer;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.Future;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 
 public class InvocationClient {
     public static final InvocationMode DEFAULT_INVOCATION_MODE = InvocationMode.SYNC;
@@ -34,13 +28,12 @@ public class InvocationClient {
     private static final int maxSyncPayloadSizeBytes = (6 * MEGABYTE_SIZE);
     private static final int maxAsyncPayloadSizeBytes = (256 * KILOBYTE_SIZE);
 
-    private final AWSLambdaAsync innerClient;
+    private final AWSLambda innerClient;
     private final String functionArn;
     private InvocationFailure failureMode;
     private InvocationMode invocationMode;
-    private Duration invocationTimeout;
 
-    private InvocationClient(String functionArn, AWSLambdaAsync innerClient) {
+    private InvocationClient(String functionArn, AWSLambda innerClient) {
         this.functionArn = functionArn;
         this.innerClient = innerClient;
     }
@@ -54,21 +47,13 @@ public class InvocationClient {
                 .withFunctionName(functionArn)
                 .withPayload(ByteBuffer.wrap(payload));
 
-        final Future<InvokeResult> futureResult = innerClient.invokeAsync(request);
-
         final Instant start = Instant.now();
         try {
-            final InvokeResult result = futureResult.get(invocationTimeout.toMillis(), TimeUnit.MILLISECONDS);
+            final InvokeResult result = innerClient.invoke(request);
             return new InvocationResponse(result.getStatusCode(), result.getLogResult(),
                     result.getFunctionError(), start, Instant.now());
         } catch (RequestTooLargeException e) {
             return checkPayloadSizeForInvocationType(payload, type, start, e);
-        } catch (final InterruptedException | ExecutionException e) {
-            LOGGER.error(e.getLocalizedMessage(), e);
-            throw new InvocationException(e);
-        } catch (final TimeoutException e) {
-            return new InvocationResponse(504, e.getLocalizedMessage(), e.getLocalizedMessage(), start,
-                    Instant.now());
         }
     }
 
@@ -120,10 +105,10 @@ public class InvocationClient {
         private InvocationFailure failureMode = DEFAULT_FAILURE_MODE;
         private Duration invocationTimeout = Duration.ofMillis(DEFAULT_INVOCATION_TIMEOUT_MS);
 
-        private final AWSLambdaAsyncClientBuilder innerBuilder;
+        private final AWSLambdaClientBuilder innerBuilder;
 
         public Builder() {
-            this.innerBuilder = AWSLambdaAsyncClientBuilder.standard();
+            this.innerBuilder = AWSLambdaClientBuilder.standard();
         }
 
         public InvocationClient build() {
@@ -133,7 +118,6 @@ public class InvocationClient {
             InvocationClient client = new InvocationClient(functionArn, innerBuilder.build());
             client.failureMode = failureMode;
             client.invocationMode = invocationMode;
-            client.invocationTimeout = invocationTimeout;
             return client;
         }
 
